@@ -1,0 +1,17 @@
+# Ubuntu 배포본 검증 이미지.
+#
+# Ubuntu 24.04 아카이브의 nodejs 는 18.x 로 package.json 의 engines(>=20) 미만이라
+# NodeSource 에서 받는다. setpriv 는 "passwd 에 없는 uid" 시나리오 재현에 필요하다.
+FROM ubuntu:24.04
+
+ARG NODE_MAJOR=22
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl gnupg git bash coreutils util-linux locales \
+ && sed -i 's/^# *\(en_US.UTF-8\)/\1/' /etc/locale.gen && locale-gen \
+ && curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
+ && apt-get install -y --no-install-recommends nodejs \
+ && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+WORKDIR /w

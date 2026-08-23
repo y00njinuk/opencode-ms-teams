@@ -1,0 +1,20 @@
+# Rocky Linux 9 배포본 검증 이미지.
+#
+# 주의 1: Rocky 9 의 기본 nodejs 패키지는 16.20.2 로 package.json 의
+#         engines(node>=20) 미만이다. 반드시 모듈 스트림을 올려야 한다.
+# 주의 2: RHEL9 계열은 curl-minimal 이 기본 탑재라 curl 을 그냥 install 하면
+#         파일 충돌로 실패한다. 스모크 테스트에 curl 이 필요 없으므로 넣지 않는다.
+# 주의 3: 베이스 이미지는 coreutils-single 을 쓴다. coreutils 를 install 하면
+#         파일 충돌로 실패하며, readlink 등 필요한 도구는 이미 들어 있다.
+# setpriv(util-linux) 는 "passwd 에 없는 uid" 시나리오 재현에 필요하다.
+FROM rockylinux/rockylinux:9
+
+ARG NODE_STREAM=22
+
+RUN dnf -y module reset nodejs \
+ && dnf -y module enable "nodejs:${NODE_STREAM}" \
+ && dnf -y install nodejs npm bash util-linux glibc-langpack-en \
+ && dnf clean all && rm -rf /var/cache/dnf
+
+ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+WORKDIR /w
