@@ -6,7 +6,7 @@
 #
 # 워크플로우:
 #   1. Pre-flight 체크 (git 상태, 브랜치, 원격 동기화)
-#   2. 테스트 실행 (bun test + typecheck + build)
+#   2. 테스트 실행 (bun test + typecheck + build + 리눅스 배포본 검증)
 #   3. 버전 bump 미리보기
 #   4. **사용자 승인 게이트 #1** (버전 bump 확인)
 #   5. npm version <bump> 실행 (커밋 + 태그 생성)
@@ -17,6 +17,13 @@
 #
 # 옵션:
 #   --yes: 모든 확인 프롬프트 자동 승인 (CI 전용, 대화형에서는 사용 금지)
+#
+# 환경변수:
+#   MS_TEAMS_SKIP_LINUX_TEST=1  STEP 2 의 리눅스 배포본 검증을 건너뛴다.
+#
+# 리눅스 검증 게이트(STEP 2)는 "선택적"이다 — docker 를 쓸 수 없는 환경에서는
+# 경고만 남기고 통과시킨다. 다만 docker 가 있는데 검증이 실패하면 릴리스를 중단한다.
+# (배포 대상에 Ubuntu·Rocky 가 포함되므로, 돌릴 수 있으면 반드시 돌린다.)
 
 set -euo pipefail
 
@@ -127,13 +134,42 @@ ok "npm 사용자: $NPM_USER"
 
 # ---------- STEP 2: 테스트 ----------
 log "=========================================="
-log "STEP 2: 테스트 실행 (bun test + typecheck + build)"
+log "STEP 2: 테스트 실행 (bun test + typecheck + build + 리눅스 배포본 검증)"
 log "=========================================="
 
 if ! bun test; then err "bun test 실패. 릴리스 중단."; exit 1; fi
 if ! bunx tsc --noEmit; then err "typecheck 실패. 릴리스 중단."; exit 1; fi
 if ! npm run build; then err "build 실패. 릴리스 중단."; exit 1; fi
-ok "모든 테스트/빌드 통과"
+ok "테스트/빌드 통과"
+
+# ---------- 리눅스 배포본 검증 (선택적 게이트) ----------
+# 배포 대상에 Ubuntu·Rocky 가 포함되므로 tarball 을 실제로 글로벌 설치해 확인한다.
+# docker 를 쓸 수 없는 환경(CI 컨테이너, docker 미설치)에서는 경고만 남기고 통과한다.
+# 반대로 docker 가 있는데 검증이 깨지면, 리눅스 사용자에게 깨진 패키지가 나가므로 중단한다.
+linux_gate_available() {
+  [ "${MS_TEAMS_SKIP_LINUX_TEST:-0}" = "1" ] && { warn "MS_TEAMS_SKIP_LINUX_TEST=1 — 리눅스 검증 건너뜀"; return 1; }
+  command -v docker >/dev/null 2>&1 || { warn "docker 없음 — 리눅스 검증 건너뜀 (Ubuntu/Rocky 미검증 상태로 배포됨)"; return 1; }
+  docker info >/dev/null 2>&1 && return 0
+  # 데몬이 꺼져 있어도 기동 수단이 있으면 test-linux.sh 가 알아서 켜고 끝나면 되돌린다.
+  command -v orb >/dev/null 2>&1 && return 0
+  command -v colima >/dev/null 2>&1 && return 0
+  warn "docker 데몬에 연결할 수 없고 기동 수단도 없음 — 리눅스 검증 건너뜀"
+  return 1
+}
+
+if linux_gate_available; then
+  log "리눅스 배포본 검증 (Ubuntu 24.04 + Rocky Linux 9)"
+  if ! bash scripts/test-linux.sh; then
+    err "리눅스 배포본 검증 실패. 릴리스 중단."
+    err "  재현: npm run test:linux"
+    err "  이 검증을 건너뛰려면: MS_TEAMS_SKIP_LINUX_TEST=1 $0 $BUMP"
+    exit 1
+  fi
+  ok "Ubuntu · Rocky 배포본 검증 통과"
+else
+  LINUX_UNVERIFIED=1
+fi
+ok "STEP 2 완료"
 
 # ---------- STEP 3: 버전 미리보기 ----------
 log "=========================================="
@@ -213,6 +249,9 @@ log "=========================================="
 log "STEP 7: 공개 npm 배포 승인 (게이트 #2)"
 log "=========================================="
 
+if [ "${LINUX_UNVERIFIED:-0}" = "1" ]; then
+  warn "주의: 이번 릴리스는 Ubuntu/Rocky 배포본 검증을 거치지 않았습니다 (STEP 2 참고)."
+fi
 warn "이제 공개 npm registry (registry.npmjs.org) 에 $NEW_TAG 를 배포합니다."
 warn "공개 배포이므로 누구나 설치할 수 있게 됩니다."
 warn "배포 후에는 동일 버전 재-publish 가 registry에 의해 거부됩니다."

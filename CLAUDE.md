@@ -82,7 +82,7 @@ bunx tsc --noEmit     # 오류 0건 기대
 npm run build         # dist 재빌드
 npm publish --dry-run # tarball 구성 확인
 
-# 배포 대상 리눅스 검증 (release 전 필수, docker 필요)
+# 배포 대상 리눅스 검증 (docker 필요 / release.sh STEP 2 가 자동 수행)
 npm run test:linux    # Ubuntu 24.04 + Rocky Linux 9 에서 tarball 글로벌 설치 스모크
 npm run test:ubuntu   # 한 배포판만 돌릴 때
 npm run test:rocky

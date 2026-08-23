@@ -741,13 +741,19 @@ npm run release:major   # 0.6.1 → 1.0.0
 ```
 
 `scripts/release.sh` 가 다음을 자동화:
-1. Pre-flight 체크 (git 상태, 브랜치, 원격 동기화)
-2. `bun test` + `tsc --noEmit` + `npm run build`
+1. Pre-flight 체크 (git 상태, 브랜치, 원격 동기화, npm 로그인)
+2. `bun test` + `tsc --noEmit` + `npm run build` + 리눅스 배포본 검증 (선택적 게이트)
 3. **승인 게이트 #1** (버전 bump 확인)
 4. `npm version <bump>` (커밋 + 태그)
 5. `npm publish --dry-run` 검증
 6. **승인 게이트 #2** (공개 npm 배포 확인, 돌이킬 수 없음)
 7. `npm publish` → 공개 npm registry (registry.npmjs.org)
 8. `git push --follow-tags`
+
+**리눅스 검증 게이트 (STEP 2)**: docker 를 쓸 수 있으면 `scripts/test-linux.sh` 로
+Ubuntu·Rocky 배포본 검증을 자동 수행한다. docker 가 없거나 데몬을 띄울 수단이 없으면
+경고만 남기고 통과하며, 이 경우 승인 게이트 #2 에서 "미검증 상태" 를 다시 알린다.
+반대로 docker 가 있는데 검증이 실패하면 릴리스를 중단한다.
+`MS_TEAMS_SKIP_LINUX_TEST=1` 로 명시적으로 건너뛸 수 있다.
 
 `--yes` 옵션은 CI 전용이며 대화형 세션에서는 사용 금지.

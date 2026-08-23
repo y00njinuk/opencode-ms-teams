@@ -476,8 +476,8 @@ opencode 는 캐시에 남은 옛 버전을 계속 로드할 수 있다.
 
 `scripts/release.sh` 실행 단계:
 
-1. Pre-flight 체크 (git 상태·브랜치·원격 동기화)
-2. `bun test` + `tsc --noEmit` + `npm run build`
+1. Pre-flight 체크 (git 상태·브랜치·원격 동기화·npm 로그인)
+2. `bun test` + `tsc --noEmit` + `npm run build` + 리눅스 배포본 검증 (선택적 게이트)
 3. **승인 게이트 #1** (버전 bump 확인)
 4. `npm version <bump>` (커밋 + 태그)
 5. `npm publish --dry-run` 검증
