@@ -36,12 +36,12 @@ const CHAT_ID_RE = /(19:[A-Za-z0-9._~%!$&'()*+,;=:@-]+@(?:thread\.v2|unq\.gbl\.s
 // + 전각 공백(U+3000). 후행 경계는 lookahead 로 검사하되 매칭 후 연속 구분자는 소비한다.
 const TRIGGER_DELIMS = " \t\n,.!?~:;\u2026\uFF0C\u3002\uFF01\uFF1F\u3000"
 // alternation 은 longest-match 안전을 위해 길이 내림차순으로 정렬.
-// 답장 verb keyword (#allow/#reject/#answer/#skip) 는 permission/question 응답 전용이며,
+// 답장 verb keyword (#allow-always/#allow/#reject/#answer/#skip) 는 permission/question 응답 전용이며,
 // 매칭 시 pollLoop 이 promptAsync 로 흘리지 않고 executeReplyCommand 로 라우팅한다 (불변식 16).
 const TRIGGER_RE =
-  /^(?:#(?:opencode|question|answer|reject|agent|allow|skip|ask|ai)|가재야|막둥아)(?=[ \t\n,.!?~:;\u2026\uFF0C\u3002\uFF01\uFF1F\u3000]|$)/iu
+  /^(?:#(?:allow-always|opencode|question|answer|reject|agent|allow|skip|ask|ai)|가재야|막둥아)(?=[ \t\n,.!?~:;\u2026\uFF0C\u3002\uFF01\uFF1F\u3000]|$)/iu
 
-const REPLY_VERB_KEYWORDS = new Set(["#allow", "#reject", "#answer", "#skip"])
+const REPLY_VERB_KEYWORDS = new Set(["#allow-always", "#allow", "#reject", "#answer", "#skip"])
 
 type TriggerMatch =
   | { matched: false }
@@ -52,18 +52,24 @@ const REPLY_TTL_MS = 24 * 60 * 60 * 1000
 const REPLY_SHORTCODE_MAX_ATTEMPTS = 8
 
 type ReplyCommand =
-  | { verb: "allow" | "reject"; code: string }
+  | { verb: "allow" | "allow-always" | "reject"; code: string }
   | { verb: "answer"; code: string; labels: string[]; text: string | null }
   | { verb: "skip"; code: string }
 
+const PERMISSION_RESPONSE_BY_VERB = {
+  allow: "once",
+  "allow-always": "always",
+  reject: "reject",
+} as const
+
 const REPLY_CODE_RE = /^([pq][0-9a-z]{5})(?:-([1-9][0-9]?))?$/i
 
-// keyword 는 detectTrigger 가 반환한 소문자 형태 (#allow/#reject/#answer/#skip 중 하나).
+// keyword 는 detectTrigger 가 반환한 소문자 형태 (#allow-always/#allow/#reject/#answer/#skip 중 하나).
 // verb 는 keyword 로 이미 확정되었으므로 payload 는 code 부터 시작한다.
 // text: 는 free-text answer 의 greedy tail terminator (Oracle 조정 #6).
 function parseReplyCommand(keyword: string, payload: string): (ReplyCommand & { subIndex: number | null }) | null {
   if (!REPLY_VERB_KEYWORDS.has(keyword)) return null
-  const verb = keyword.slice(1) as "allow" | "reject" | "answer" | "skip"
+  const verb = keyword.slice(1) as "allow" | "allow-always" | "reject" | "answer" | "skip"
   const trimmed = payload.trim()
   if (!trimmed) return null
   const spaceIdx = trimmed.search(/\s/)
@@ -76,7 +82,7 @@ function parseReplyCommand(keyword: string, payload: string): (ReplyCommand & { 
   }
   const parsed = parseCode(codePart)
   if (!parsed) return null
-  if (verb === "allow" || verb === "reject") {
+  if (verb === "allow" || verb === "allow-always" || verb === "reject") {
     if (parsed.subIndex != null || rest) return null
     return { verb, code: parsed.code, subIndex: null }
   }
@@ -1314,7 +1320,7 @@ export const MicrosoftTeamsPlugin: Plugin = async (input) => {
           log.info("trigger.skip.emptyPayload", { sid, mid: m.id, keyword: trig.keyword })
           continue
         }
-        // Reply verb keyword (#allow/#reject/#answer/#skip) 는 executeReplyCommand 로만 라우팅한다.
+        // Reply verb keyword (#allow-always/#allow/#reject/#answer/#skip) 는 executeReplyCommand 로만 라우팅한다.
         // 파싱 실패 시에도 promptAsync 로 fallthrough 하지 않는다 ("allow p2a7k9" 가 세션에 주입되는 회귀 방지).
         if (REPLY_VERB_KEYWORDS.has(trig.keyword)) {
           const cmd = parseReplyCommand(trig.keyword, trig.payload)
@@ -1364,7 +1370,7 @@ export const MicrosoftTeamsPlugin: Plugin = async (input) => {
     rootSid: string,
     chatId: string,
   ): Promise<void> {
-    if (cmd.verb === "allow" || cmd.verb === "reject") {
+    if (cmd.verb === "allow" || cmd.verb === "allow-always" || cmd.verb === "reject") {
       const p = pendingPermissions.get(cmd.code)
       if (!p) {
         log.info("reply.perm.unknown", { code: cmd.code, verb: cmd.verb })
@@ -1374,7 +1380,7 @@ export const MicrosoftTeamsPlugin: Plugin = async (input) => {
         log.warn("reply.perm.wrongChat", { code: cmd.code, expected: p.rootSid, actual: rootSid })
         return
       }
-      const response = cmd.verb === "allow" ? "once" : "reject"
+      const response = PERMISSION_RESPONSE_BY_VERB[cmd.verb]
       let ok = false
       try {
         const res = await (client as unknown as {
@@ -1939,7 +1945,7 @@ export const MicrosoftTeamsPlugin: Plugin = async (input) => {
     const outsideList = outsidePaths.length
       ? `<b>⚠️ Workspace 외부 경로 (Teams 승인 시 주의)</b>:<ul>${outsidePaths.map((p) => `<li>${escapeHtml(p)}</li>`).join("")}</ul>`
       : ""
-    const replyHint = code ? renderReplyHint([`#allow ${code}`, `#reject ${code}`]) : ""
+    const replyHint = code ? renderReplyHint([`#allow ${code}`, `#allow-always ${code}`, `#reject ${code}`]) : ""
     return (
       renderSubSessionBanner(subInfo) +
       `<b>[⚠️ Microsoft Teams: 권한 요청 · ${escapeHtml(shortId)}]</b>` +

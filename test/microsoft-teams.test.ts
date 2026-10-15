@@ -2082,8 +2082,9 @@ describe("Teams 답장 → permission/question 대체 응답 (요구사항 신�
     const body = JSON.parse(String(sends[0].init!.body)).body.content as string
     const code = extractShortCode(body, "perm")
     expect(code).toMatch(/^p[0-9a-z]{5}$/)
-    expect(body).toContain(`allow ${code}`)
-    expect(body).toContain(`reject ${code}`)
+    expect(body).toContain(`#allow ${code}`)
+    expect(body).toContain(`#allow-always ${code}`)
+    expect(body).toContain(`#reject ${code}`)
     fs.rmSync(workspace, { recursive: true, force: true })
   })
 
@@ -2158,7 +2159,7 @@ describe("Teams 답장 → permission/question 대체 응답 (요구사항 신�
     fs.rmSync(workspace, { recursive: true, force: true })
   })
 
-  test("Teams 답장 '#allow-always <code>' → 지원하지 않음 (detectTrigger 미매칭으로 SDK 호출 없음)", async () => {
+  test("Teams 답장 '#allow-always <code>' → SDK 로 permission 'always' 응답 호출 + 반영 확인 발신", async () => {
     writeTokens()
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "ws-"))
     routeGraphSend("9999")
@@ -2169,6 +2170,50 @@ describe("Teams 답장 → permission/question 대체 응답 (요구사항 신�
     const alertBody = JSON.parse(String(fetchCalls.find((c) => c.init?.method === "POST" && c.url.includes("/chats/"))!.init!.body)).body.content as string
     const code = extractShortCode(alertBody, "perm")
     routeGraphReplyList(`#allow-always ${code}`, "9502")
+    await sleep(200)
+    expect(fake.calls.permissionRespond.length).toBe(1)
+    const call = fake.calls.permissionRespond[0]
+    expect(call.path.id).toBe("ses_a")
+    expect(call.path.permissionID).toBe("perm_aa")
+    expect(call.body.response).toBe("always")
+    expect(fake.calls.promptAsync.length).toBe(0)
+    const confirmations = fetchCalls
+      .filter((c) => c.init?.method === "POST" && c.url.includes("/chats/"))
+      .map((c) => JSON.parse(String(c.init!.body)).body.content as string)
+      .filter((html) => html.includes("반영됨"))
+    expect(confirmations.length).toBe(1)
+    expect(confirmations[0]).toContain(`<code>${code}</code> allow-always`)
+    fs.rmSync(workspace, { recursive: true, force: true })
+  })
+
+  test("Teams 답장 '#ALLOW-ALWAYS <code>' 대문자도 'always' 로 매칭된다", async () => {
+    writeTokens()
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "ws-"))
+    routeGraphSend("9999")
+    const fake = makeFakeClient({ messages: [] })
+    const hooks = await initPlugin(fake, workspace)
+    await selectChat(hooks, "ses_a")
+    await firePerm(hooks, { id: "perm_au", type: "bash", sessionID: "ses_a", metadata: { cwd: workspace } })
+    const alertBody = JSON.parse(String(fetchCalls.find((c) => c.init?.method === "POST" && c.url.includes("/chats/"))!.init!.body)).body.content as string
+    const code = extractShortCode(alertBody, "perm")
+    routeGraphReplyList(`#ALLOW-ALWAYS ${code.toUpperCase()}`, "9504")
+    await sleep(200)
+    expect(fake.calls.permissionRespond.length).toBe(1)
+    expect(fake.calls.permissionRespond[0].body.response).toBe("always")
+    fs.rmSync(workspace, { recursive: true, force: true })
+  })
+
+  test("'#allow-always' 파싱 실패 (sub-code / 여분 인자) 는 SDK 호출도 promptAsync 주입도 없다", async () => {
+    writeTokens()
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "ws-"))
+    routeGraphSend("9999")
+    const fake = makeFakeClient({ messages: [] })
+    const hooks = await initPlugin(fake, workspace)
+    await selectChat(hooks, "ses_a")
+    await firePerm(hooks, { id: "perm_ab", type: "bash", sessionID: "ses_a", metadata: { cwd: workspace } })
+    const alertBody = JSON.parse(String(fetchCalls.find((c) => c.init?.method === "POST" && c.url.includes("/chats/"))!.init!.body)).body.content as string
+    const code = extractShortCode(alertBody, "perm")
+    routeGraphReplyList(`#allow-always ${code}-1 extra`, "9505")
     await sleep(200)
     expect(fake.calls.permissionRespond.length).toBe(0)
     expect(fake.calls.promptAsync.length).toBe(0)

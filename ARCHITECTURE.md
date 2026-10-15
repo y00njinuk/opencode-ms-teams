@@ -309,15 +309,16 @@ onPermissionAsked / onQuestionAsked
 pollLoop (waiting.has(sid) OR alertPending 채워짐 동안 계속)
       └─ per-reply detectTrigger:
             ├─ TRIGGER_RE 매칭 (offset 0, longest-first alternation)
-            ├─ keyword ∈ REPLY_VERB_KEYWORDS ({#allow, #reject, #answer, #skip}) 이면:
+            ├─ keyword ∈ REPLY_VERB_KEYWORDS ({#allow-always, #allow, #reject, #answer, #skip}) 이면:
             │     parseReplyCommand(keyword, payload):
             │       ├─ #allow  <code>                                → verb=allow
+            │       ├─ #allow-always <code>                          → verb=allow-always
             │       ├─ #reject <code>                                → verb=reject
             │       ├─ #answer <code>[-<sub>] <label>[, <label2>]    → verb=answer, labels=[...]
             │       ├─ #answer <code>[-<sub>] text: <자유텍스트>     → verb=answer, text=...
             │       └─ #skip   <code>                                → verb=skip
             │     매칭 시 executeReplyCommand → continue (promptAsync fallthrough 금지)
-            │       ├─ allow/reject → client.postSessionIdPermissionsPermissionId({path, body:{response}})
+            │       ├─ allow/allow-always/reject → client.postSessionIdPermissionsPermissionId({path, body:{response}})
             │       ├─ answer       → callQuestionReply(baseUrl, reqID, [[labels...]])
             │       └─ skip         → callQuestionReject(baseUrl, reqID)
             │     성공/실패 후 <b>✅ 반영됨</b> / <b>❌ 적용 실패</b> Teams 로 후속 발신
@@ -330,6 +331,7 @@ pollLoop (waiting.has(sid) OR alertPending 채워짐 동안 계속)
 | 명령 | 대상 | 매핑 |
 |---|---|---|
 | `#allow <code>` | permission | `response: "once"` |
+| `#allow-always <code>` | permission | `response: "always"` |
 | `#reject <code>` | permission | `response: "reject"` |
 | `#answer <code> <label>[, <label2>...]` | question (single) | `answers: [[labels...]]` |
 | `#answer <code>-<n> <label>` | question (multi, per sub-code) | 모두 채워진 후 assemble → POST |
@@ -339,7 +341,7 @@ pollLoop (waiting.has(sid) OR alertPending 채워짐 동안 계속)
 - `<code>` = `p` 또는 `q` prefix + base36 5자 (예: `pa7k9m`, `q3x9m2`)
 - Multi-question 은 `{rootCode}-1`, `{rootCode}-2`, ... 형태의 sub-code 로 답변
 - 모든 sub-code 답변이 채워지면 한 번에 서버로 POST
-- **`#allow-always` 는 지원하지 않는다** — `#allow` 뒤 `-` 는 후행 경계가 아니므로 detectTrigger 미매칭. 원격 계정 탈취 시 permanent grant 위험 (Oracle 블로커 #5). 영구 승인은 opencode TUI 에서 처리
+- **`#allow-always` 는 독립 keyword** — `TRIGGER_RE` alternation 맨 앞 (최장) 에 두어 `#allow` 보다 먼저 매칭된다. `#allow` 뒤 `-` 는 후행 경계가 아니므로 `#allow` 로 오매칭되지 않는다. `always` 는 이후 동일 패턴 요청까지 자동 승인하므로 원격 계정 탈취 시 broad grant 위험이 있다 (README 에서 외부 경로 alert 에는 `#allow` 권장)
 - **legacy `#opencode <verb>` 문법 폐기 (v1.3.0)** — `#opencode` 는 기존 세션 주입 keyword 로 유지되므로 `#opencode allow ...` 는 assistant 세션에 일반 텍스트로 주입될 뿐 SDK 호출 없음
 
 ### API 채널
