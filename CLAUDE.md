@@ -57,12 +57,12 @@ opencode-ms-teams/
 14. **`permission.ask` plugin hook 등록 금지**: opencode 1.4.17 core 에 trigger 호출부가 없어 dead API 이다 (근거: `omo-opencode-hook-analysis.md` §2 항목 4). 권한 알림은 반드시 `event` hook 의 `permission.asked` bus event 분기로 처리한다. `permission.updated` 는 SDK 타입 오류일 뿐 실제 발화하는 이름은 `permission.asked`이다.
 15. **question.asked / permission.asked runtime narrowing**: SDK v1 Event union 에 두 이벤트가 누락되어 있으므로 `event as unknown as {type?: string; properties?: Record<string, unknown>}` 로 캐스팅 후 `isQuestionAsked()` / `isPermissionAsked()` 로 최소 shape 검증 후 소비. `event as any` 로 축약하지 말 것 (후속 개발자가 타입 무시로 오해할 수 있음).
 16. **Teams 답장 대체 응답 파이프라인 불변식**:
-    - **답장 verb 는 top-level keyword**: `#allow` / `#reject` / `#answer` / `#skip` 은 `TRIGGER_RE` alternation 에 포함된 최상위 트리거 keyword 이다. `REPLY_VERB_KEYWORDS = new Set(["#allow","#reject","#answer","#skip"])` 로 관리. `TRIGGER_RE` 는 반드시 keyword 길이 내림차순 (`opencode|question|answer|reject|agent|allow|skip|ask|ai`) 정렬을 유지해 longest-match 를 보장한다.
+    - **답장 verb 는 top-level keyword**: `#allow-always` / `#allow` / `#reject` / `#answer` / `#skip` 은 `TRIGGER_RE` alternation 에 포함된 최상위 트리거 keyword 이다. `REPLY_VERB_KEYWORDS = new Set(["#allow-always","#allow","#reject","#answer","#skip"])` 로 관리. `TRIGGER_RE` 는 반드시 keyword 길이 내림차순 (`allow-always|opencode|question|answer|reject|agent|allow|skip|ask|ai`) 정렬을 유지해 longest-match 를 보장한다.
     - **shortCode 생성**: `generateShortCode('p' | 'q', existing)` 로 base36 5자 무작위 + prefix. 충돌 시 최대 8회 재시도 후 실패는 알림 skip 으로 유예 (attack surface 를 줄이기 위해 hash 기반 결정성 부여 금지).
     - **alertPending 게이트**: `alertPending: Map<rootSid, Set<code>>` 를 `pollLoop` 종료 조건에 포함시켜, `waiting` 없이도 permission/question 답장을 계속 폴링한다. `ensurePollLoop(rootSid)` 는 `onPermissionAsked` / `onQuestionAsked` 성공 후 반드시 호출. 미호출 시 답장이 도달해도 소비하지 못하는 회귀 (Oracle 블로커 #1).
     - **Reply verb keyword 라우팅**: pollLoop 에서 `REPLY_VERB_KEYWORDS.has(trig.keyword)` 이면 `parseReplyCommand(keyword, payload)` 로 라우팅. 파싱 성공/실패 무관하게 `continue` 하여 절대 `promptAsync` 로 fallthrough 하지 않는다 ("allow p2a7k9" 가 세션 메시지로 주입되는 회귀 방지). `#opencode` / `#question` / `#agent` / `#ask` / `#ai` / `가재야` / `막둥아` 는 기존대로 promptAsync 주입 경로 유지.
     - **parseReplyCommand 시그니처**: `parseReplyCommand(keyword: string, payload: string)`. verb 는 keyword 로 이미 확정되므로 payload 는 `<code>` 부터 시작한다. `text:` prefix 는 free-text answer 의 greedy tail terminator (Oracle 조정 #6).
-    - **`allow-always` 금지**: Teams 원격 답장으로 영구 권한 부여는 지원하지 않는다 (원격 계정 탈취 시 permanent broad grant 위험). `once` 만 지원. 영구 승인은 opencode TUI 에서 처리.
+    - **verb → response 매핑**: `PERMISSION_RESPONSE_BY_VERB` 단일 테이블로 관리 (`allow`→`once`, `allow-always`→`always`, `reject`→`reject`). `allow-always` 는 이후 동일 패턴 요청까지 자동 승인하므로 README 에서 workspace 외부 경로 alert 에는 `#allow` (일회성) 사용을 권장한다.
     - **Permission 응답 채널**: v1 SDK top-level 메서드 `client.postSessionIdPermissionsPermissionId({ path: { id, permissionID }, body: { response } })` 를 사용. `client.session.*` 아래에는 없다 (혼동 방지). 대상 sid 는 `pending.sid` (원본 sub-session sid) 이지 `rootSid` 아님.
     - **Question 응답 채널**: v1 SDK 에 client 메서드 없음 → `${input.serverUrl.origin}/question/{reqID}/reply` (또는 `/reject`) 를 raw fetch 로 POST. baseUrl 우선 순위: `input.serverUrl` (URL) → `client._client.getConfig().baseUrl` 폴백. **실측 주의**: TS 선언은 `client.getConfig()` 를 노출하나 런타임 인스턴스는 `_client.getConfig()` 로만 접근 가능하므로 top-level `getConfig` 를 그대로 호출하면 undefined 참조. 두 소스 모두 없으면 조용히 skip.
     - **Multi-question sub-code**: `questions.length > 1` 이면 각 질문에 `{rootCode}-{index+1}` 부여. 사용자는 각 sub-code 로 개별 답변. 모든 sub 채워지면 한번에 `Array<Array<string>>` assemble 후 POST. `parseReplyCommand` 가 `q9rbvg-2` 를 `code=q9rbvg, subIndex=2` 로 분해해 반환하므로 `pendingQuestions.get(cmd.code)` 는 항상 root 를 조회한다.
@@ -77,7 +77,7 @@ opencode-ms-teams/
 npm install --no-audit --no-fund
 
 # 검증 (변경 후 반드시)
-bun test              # 130 pass 기대 (3개 파일)
+bun test              # 132 pass 기대 (3개 파일)
 bunx tsc --noEmit     # 오류 0건 기대
 npm run build         # dist 재빌드
 npm publish --dry-run # tarball 구성 확인
