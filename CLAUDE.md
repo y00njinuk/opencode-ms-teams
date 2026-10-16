@@ -52,8 +52,8 @@ opencode-ms-teams/
     - **Idle send pipeline** (`onIdle` — assistant idle 응답 발신, chat-select 안내 append, auth notice append, chat.message 의 chatId 파싱·저장): sub session 에서 **완전 차단**. `sessionParent` 캐시를 우회하면 sub session 마다 안내가 반복 append 되는 회귀가 발생한다.
     - **Blocking user-input events** (`permission.asked`, `question.asked`): `resolveRoot()` 로 root sessionID 를 찾아 root 의 chatId 로 **bubble-up 발신**한다. 원격 사용자가 opencode UI 로 돌아와 승인/응답해야 sub session 이 unblock 되므로 무음 처리 시 요구사항 위반. 알림 본문에는 sub-session 배너 (`🌿 sub-session {short} · root {short}`) 를 prepend 하여 컨텍스트 식별을 돕는다. `isSubSession()` 이 transient `session.get` 실패에 `sessionParent.set(sid, null)` 로 캐시를 오염시키면 이후 bubble-up 이 영구적으로 잘못된 sid 로 chatId 를 찾는 회귀가 발생하므로 catch 블록은 절대 캐시를 남기지 않는다.
 11. **`defaultSettings()` / `defaultConfig()` 동기화**: `install-lib.mjs` 의 `defaultSettings()` 와 `src/index.ts` 의 `defaultConfig()` 는 스키마·기본값을 반드시 동일하게 유지할 것.
-12. **Lazy connect 원칙**: 플러그인 로드만으로는 어떤 외부 통신 (Azure device flow / Graph `/me/chats` / notify toast / 응답 텍스트 mutation) 도 발생시키지 않는다. `activateConnect()` 는 오직 세 경로 (① `experimental.text.complete` 의 `CONNECT_TRIGGER_MARKER` / `CONNECT_TRIGGER_PHRASE`, ② `chat.message` 의 `/connect-teams` slash, ③ `chat.message` 의 chatId 붙여넣기) 로만 트리거된다. eager bootstrap 재도입 금지.
-13. **`CONNECT_TRIGGER_MARKER` / SKILL.md 동기화**: `src/index.ts` 의 상수 `CONNECT_TRIGGER_MARKER` 문자열과 `CONNECT_TEAMS_SKILL_CONTENT` 의 marker 지시 문구가 동일해야 한다. marker 를 변경하려면 `CONNECT_TEAMS_SKILL_VERSION` 을 반드시 bump 하여 사용자 스킬 파일이 자동 갱신되도록 할 것.
+12. **Lazy connect 원칙**: 플러그인 로드만으로는 어떤 외부 통신 (Azure device flow / Graph `/me/chats` / notify toast / 응답 텍스트 mutation) 도 발생시키지 않는다. `activateConnect()` 는 오직 세 경로 (① `experimental.text.complete` 의 `CONNECT_TRIGGER_MARKER` / `CONNECT_TRIGGER_PHRASE`, ② `chat.message` 의 `/connect-teams` (리터럴 slash 또는 opencode TUI 가 확장한 SKILL.md 본문 — `CONNECT_TEAMS_SKILL_HEADING` + `CONNECT_TRIGGER_MARKER` 동시 포함), ③ `chat.message` 의 chatId 붙여넣기) 로만 트리거된다. eager bootstrap 재도입 금지.
+13. **`CONNECT_TRIGGER_MARKER` / SKILL.md 동기화**: `src/index.ts` 의 상수 `CONNECT_TRIGGER_MARKER` 문자열과 `CONNECT_TEAMS_SKILL_CONTENT` 의 marker 지시 문구가 동일해야 한다. `CONNECT_TEAMS_SKILL_HEADING` 도 SKILL 본문과 `detectConnectCommand()` 가 같은 상수를 참조해야 하며, 변경 시 역시 버전 bump 필수 (bump 없이 바꾸면 사용자에게 설치된 구 SKILL.md 의 heading 과 어긋나 TUI 의 `/connect-teams` 를 감지하지 못하고, 느린 네트워크에서 채팅방 목록이 누락된다). marker 를 변경하려면 `CONNECT_TEAMS_SKILL_VERSION` 을 반드시 bump 하여 사용자 스킬 파일이 자동 갱신되도록 할 것.
 14. **`permission.ask` plugin hook 등록 금지**: opencode 1.4.17 core 에 trigger 호출부가 없어 dead API 이다 (근거: `omo-opencode-hook-analysis.md` §2 항목 4). 권한 알림은 반드시 `event` hook 의 `permission.asked` bus event 분기로 처리한다. `permission.updated` 는 SDK 타입 오류일 뿐 실제 발화하는 이름은 `permission.asked`이다.
 15. **question.asked / permission.asked runtime narrowing**: SDK v1 Event union 에 두 이벤트가 누락되어 있으므로 `event as unknown as {type?: string; properties?: Record<string, unknown>}` 로 캐스팅 후 `isQuestionAsked()` / `isPermissionAsked()` 로 최소 shape 검증 후 소비. `event as any` 로 축약하지 말 것 (후속 개발자가 타입 무시로 오해할 수 있음).
 16. **Teams 답장 대체 응답 파이프라인 불변식**:
@@ -77,7 +77,7 @@ opencode-ms-teams/
 npm install --no-audit --no-fund
 
 # 검증 (변경 후 반드시)
-bun test              # 132 pass 기대 (3개 파일)
+bun test              # 136 pass 기대 (3개 파일)
 bunx tsc --noEmit     # 오류 0건 기대
 npm run build         # dist 재빌드
 npm publish --dry-run # tarball 구성 확인

@@ -641,7 +641,7 @@ Azure AD 앱 등록/권한 신청은 조직의 Azure 관리자 안내를 따른�
 **감지 경로 3종** (defense-in-depth):
 1. assistant 응답에 `CONNECT_TRIGGER_MARKER` (HTML 주석) 포함
 2. assistant 응답에 `"**Microsoft Teams 연동을 시작합니다.**"` 문구 포함 (모델이 marker 를 누락한 경우 대비)
-3. 사용자 입력 첫 줄이 `/connect-teams` slash 로 시작 (스킬 실행 여부와 무관하게 즉시 activate)
+3. 사용자 입력이 `/connect-teams` 호출인 경우 — 첫 줄이 `/connect-teams` 로 시작하거나, OpenCode TUI 가 스킬을 SKILL.md 본문으로 확장해 보낸 경우 (스킬 실행 여부와 무관하게 즉시 activate, 채팅방 목록 조회가 끝날 때까지 대기)
 
 또한 사용자가 처음부터 `19:...` 형식 chatId 를 붙여넣으면 **implicit connect** 로 취급하여 activate.
 
