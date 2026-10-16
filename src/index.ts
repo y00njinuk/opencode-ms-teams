@@ -148,6 +148,9 @@ const DEFAULT_BACKOFF1_MS = 10 * 60 * 1000
 const DEFAULT_BACKOFF2_MS = 60 * 60 * 1000
 const MAX_HTML_BYTES = 25_000
 const CHAT_LIST_TOP = 10
+// chat.message 가 채팅방 목록을 기다리는 상한. Graph/토큰 refresh fetch 에는 timeout 이 없어 무기한 블로킹을 막는다.
+// 초과 시 목록은 백그라운드에서 계속 받아 다음 응답에 첨부된다.
+const CHAT_DIRECTORY_WAIT_MS = 15_000
 
 const REFRESH_LEAD_MS = 5 * 60 * 1000
 const REFRESH_RETRY_MS = 30 * 1000
@@ -164,6 +167,9 @@ const CONNECT_TEAMS_SKILL_VERSION = "2"
 const CONNECT_TRIGGER_MARKER = "<!-- microsoft-teams:connect-request v1 -->"
 // 스킬 없이도 assistant 가 안내 문구를 그대로 출력한 경우를 대비한 secondary 감지 문구 (Oracle 권고 defense-in-depth).
 const CONNECT_TRIGGER_PHRASE = "**Microsoft Teams 연동을 시작합니다.**"
+// opencode TUI 는 skill 을 slash command 로 등록해 /connect-teams 를 SKILL.md 본문으로 확장해 보낸다.
+// chat.message 는 이 heading 과 CONNECT_TRIGGER_MARKER 가 함께 있으면 스킬 호출로 판단한다.
+const CONNECT_TEAMS_SKILL_HEADING = "# Skill: connect-teams"
 
 const CONNECT_TEAMS_SKILL_CONTENT = `---
 name: connect-teams
@@ -172,7 +178,7 @@ description: Microsoft Teams 연동 시작 스킬. 추가 프롬프트 없이 �
 
 <!-- skill-version: ${CONNECT_TEAMS_SKILL_VERSION} -->
 
-# Skill: connect-teams
+${CONNECT_TEAMS_SKILL_HEADING}
 이 스킬을 실행하면 현재 세션과 Microsoft Teams를 연동한다.
 플러그인이 인증 상태와 채팅방 목록을 자동으로 처리하므로 추가 입력 없이 안내를 따르기만 하면 된다.
 
@@ -1648,14 +1654,20 @@ export const MicrosoftTeamsPlugin: Plugin = async (input) => {
     return text.includes(CONNECT_TRIGGER_MARKER) || text.includes(CONNECT_TRIGGER_PHRASE)
   }
 
-  // 사용자 입력에서 /connect-teams slash command 를 감지 (assistant 응답 marker 와 무관하게 즉시 활성화).
-  function detectConnectSlashCommand(parts: Array<{ type: string; text?: string }>): boolean {
+  // 사용자 입력에서 /connect-teams 호출을 감지 (assistant 응답 marker 와 무관하게 즉시 활성화).
+  // 리터럴 "/connect-teams" (opencode run) 와 SKILL.md 본문으로 확장된 형태 (TUI) 를 모두 인식한다.
+  // 확장 형태를 놓치면 marker 경로의 2초 대기만 남아 Graph 응답이 늦을 때 스킬 응답에 채팅방 목록이 빠진다.
+  function detectConnectCommand(parts: Array<{ type: string; text?: string }>): string | null {
     for (const p of parts) {
       if (p.type !== "text" || typeof p.text !== "string") continue
       const first = p.text.trimStart().split(/\r?\n/, 1)[0] ?? ""
-      if (/^\/connect-teams(\b|$)/.test(first)) return true
+      if (/^\/connect-teams(\b|$)/.test(first)) return "chat.message.slash"
+      const hasHeadingLine = p.text.split(/\r?\n/).some((line) => line.trim() === CONNECT_TEAMS_SKILL_HEADING)
+      if (hasHeadingLine && p.text.includes(CONNECT_TRIGGER_MARKER)) {
+        return "chat.message.skill"
+      }
     }
-    return false
+    return null
   }
 
   // SDK v1 Event union 은 question.* / permission.asked 를 포함하지 않는다 (ref: omo-opencode-hook-analysis.md §3.2).
@@ -1965,9 +1977,8 @@ export const MicrosoftTeamsPlugin: Plugin = async (input) => {
   ): Promise<void> {
     const parts = output.parts ?? []
     // slash command 는 sessionChat 이 이미 확정된 세션에서도 재활성화 신호로 유효해야 하므로 gate 전에 검사한다.
-    if (!connectRequested && detectConnectSlashCommand(parts)) {
-      activateConnect("chat.message.slash", input.sessionID)
-    }
+    const connectVia = connectRequested ? null : detectConnectCommand(parts)
+    if (connectVia) activateConnect(connectVia, input.sessionID)
     if (sessionChat.has(input.sessionID)) return
     // sub session 은 Teams 발신에 관여하지 않으므로 chatId 파싱/저장/디렉토리 fetch 를 모두 skip.
     if (await isSubSession(input.sessionID)) return
@@ -1983,7 +1994,7 @@ export const MicrosoftTeamsPlugin: Plugin = async (input) => {
       }
     }
     if (!detectedId) {
-      if (connectRequested && !chatDirectory.chats) await ensureChatDirectory()
+      if (connectRequested && !chatDirectory.chats) await Promise.race([ensureChatDirectory(), sleep(CHAT_DIRECTORY_WAIT_MS)])
       return
     }
     // chatId 를 붙여넣기만 하는 경우도 implicit connect 로 취급 — 사용자의 의도가 명확하다.

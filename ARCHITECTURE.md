@@ -54,7 +54,7 @@ MicrosoftTeamsPlugin (session.idle 이벤트)
 | `event: session.idle` | `onIdle()` | fingerprint 체크 → Teams 발신 → `pollLoop()` 시작 |
 | `event: question.asked` | `onQuestionAsked()` | assistant `question` tool 발동 시 Teams 로 질문/옵션 알림 (Interview Mode 포함) |
 | `event: permission.asked` | `onPermissionAsked()` | opencode core 가 사용자 승인을 요청하면 Teams 로 알림 (알림만; 승인은 opencode UI 에서 결정) |
-| `chat.message` | `onChatMessage()` | `/connect-teams` slash 감지 → activate / 입력 텍스트에서 chatId 감지 → 세션 등록 → toast |
+| `chat.message` | `onChatMessage()` | `/connect-teams` 감지 (리터럴 slash 또는 TUI 가 확장한 SKILL.md 본문) → activate / 입력 텍스트에서 chatId 감지 → 세션 등록 → toast |
 | `experimental.text.complete` | (inline) | `CONNECT_TRIGGER_MARKER` 감지 → activate / auth 안내 / chat-select 안내 append |
 
 > `permission.ask` plugin hook 은 opencode 1.4.17 core 에 trigger 호출부가 없어 dead API 다 (omo v3.17.15 코드 조사로 확인). 실제 발화하는 것은 bus event `permission.asked` 이며, 알림은 `event` hook 분기로 옮겼다.
@@ -78,7 +78,7 @@ activateConnect(via, sid)
 **감지 경로 3종 (defense-in-depth)**:
 1. `experimental.text.complete` → `output.text` 에 `CONNECT_TRIGGER_MARKER` (`<!-- microsoft-teams:connect-request v1 -->`) 포함 시. 스킬이 assistant 에게 이 marker 를 응답 최상단에 출력하도록 지시함.
 2. `experimental.text.complete` → `output.text` 에 `CONNECT_TRIGGER_PHRASE` (`**Microsoft Teams 연동을 시작합니다.**`) 포함 시 (secondary — 모델이 marker 를 누락한 경우 대비).
-3. `chat.message` → `input.parts` 의 첫 줄이 `/connect-teams` slash command 로 시작 시.
+3. `chat.message` → `input.parts` 의 첫 줄이 `/connect-teams` 로 시작하거나 (`opencode run "/connect-teams"`), opencode TUI 가 skill slash command 를 SKILL.md 본문으로 확장해 보낸 경우 (`CONNECT_TEAMS_SKILL_HEADING` + `CONNECT_TRIGGER_MARKER` 동시 포함). 이 경로는 `chat.message` 가 `/me/chats` 를 끝까지 기다리므로 Graph 응답이 느려도 스킬 응답에 채팅방 목록이 붙는다. 경로 1·2 는 bounded wait 이므로 느린 네트워크·토큰 refresh 상황에서는 목록이 다음 응답으로 밀린다.
 
 또한 사용자가 처음부터 chatId (`19:...`) 를 붙여넣으면 **implicit connect** 으로 취급하여 activate.
 
@@ -114,7 +114,7 @@ experimental.text.complete 훅  (connectRequested = true 인 경우에만 mutate
 
 사용자 프롬프트 (connectRequested = true 상태에서만 fetch 발생)
   └─ chat.message 훅
-        ├─ /connect-teams slash 감지 → activate (이미 활성이면 no-op)
+        ├─ /connect-teams 감지 (slash 또는 확장된 SKILL.md 본문) → activate (이미 활성이면 no-op)
         ├─ chatId 없음 → (activated 경우) ensureChatDirectory() blocking → return
         └─ chatId 감지 (CHAT_ID_RE)
               ├─ activated 아니었으면 implicit connect (chatId 붙여넣기 → 명확한 의도)

@@ -4,7 +4,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { MicrosoftTeamsPlugin } from "../src/index"
 
-type Route = (url: string, init?: RequestInit) => Response | null
+type Route = (url: string, init?: RequestInit) => Response | Promise<Response> | null
 let routes: Route[]
 let fetchCalls: { url: string; init?: RequestInit }[]
 const realFetch = globalThis.fetch
@@ -1364,6 +1364,69 @@ describe("lazy connect (요구사항 2)", () => {
     )
     await sleep(50)
     expect(fetchCalls.some((c) => c.url.includes("graph.microsoft.com/v1.0/me/chats"))).toBe(true)
+  })
+
+  // opencode TUI 는 skill 을 slash command 로 등록하고, /connect-teams 입력 시
+  // 리터럴 "/connect-teams" 대신 SKILL.md 본문 (frontmatter 제외) 을 user message 로 보낸다.
+  function expandedConnectSkillBody(): string {
+    const raw = fs.readFileSync(path.join(configDir, "skills", "connect-teams", "SKILL.md"), "utf8")
+    return raw.replace(/^---\n[\s\S]*?\n---\n/, "").trim()
+  }
+
+  test("opencode 가 /connect-teams 를 SKILL.md 본문으로 확장해 보내도 chat.message 에서 활성화된다", async () => {
+    writeTokens()
+    routeChatList([{ id: "19:chat-a@thread.v2", topic: "Alice" }])
+    const fake = makeFakeClient({ messages: [] })
+    const hooks = await initPlugin(fake)
+    await hooks["chat.message"]!(
+      { sessionID: "ses_skill" } as never,
+      { message: { role: "user" }, parts: [{ type: "text", text: expandedConnectSkillBody() }] } as never,
+    )
+    expect(fetchCalls.some((c) => c.url.includes("graph.microsoft.com/v1.0/me/chats"))).toBe(true)
+  })
+
+  test("skill 본문 확장 경로는 Graph 응답이 2초를 넘어도 스킬 응답에 채팅방 목록을 첨부한다", async () => {
+    writeTokens()
+    routes.push((url, init) =>
+      url.includes("graph.microsoft.com/v1.0/me/chats") && (init?.method ?? "GET") === "GET"
+        ? sleep(2_300).then(() =>
+            json({ value: [{ id: "19:slow-chat@thread.v2", topic: "느린방", chatType: "group", lastUpdatedDateTime: "2026-08-01T00:00:00Z" }] }),
+          )
+        : null,
+    )
+    const fake = makeFakeClient({ messages: [] })
+    const hooks = await initPlugin(fake)
+    await hooks["chat.message"]!(
+      { sessionID: "ses_slow" } as never,
+      { message: { role: "user" }, parts: [{ type: "text", text: expandedConnectSkillBody() }] } as never,
+    )
+    const output = { text: `${CONNECT_MARKER}\n**Microsoft Teams 연동을 시작합니다.**` }
+    await hooks["experimental.text.complete"]!({ sessionID: "ses_slow", messageID: "msg_slow", partID: "p1" }, output)
+    expect(output.text).toContain("19:slow-chat@thread.v2")
+  }, 10_000)
+
+  test("marker 만 포함되고 skill heading 줄이 없는 메시지는 연동을 활성화하지 않는다", async () => {
+    writeTokens()
+    routeChatList([{ id: "19:chat-a@thread.v2", topic: "Alice" }])
+    const fake = makeFakeClient({ messages: [] })
+    const hooks = await initPlugin(fake)
+    await hooks["chat.message"]!(
+      { sessionID: "ses_marker_only" } as never,
+      { message: { role: "user" }, parts: [{ type: "text", text: `이 주석 뭐야? ${CONNECT_MARKER} 그리고 # Skill: connect-teams 도 설명해줘` }] } as never,
+    )
+    expect(fetchCalls.some((c) => c.url.includes("graph.microsoft.com/v1.0/me/chats"))).toBe(false)
+  })
+
+  test("skill heading 만 언급한 일반 메시지는 연동을 활성화하지 않는다 (marker 동반 필요)", async () => {
+    writeTokens()
+    routeChatList([{ id: "19:chat-a@thread.v2", topic: "Alice" }])
+    const fake = makeFakeClient({ messages: [] })
+    const hooks = await initPlugin(fake)
+    await hooks["chat.message"]!(
+      { sessionID: "ses_mention" } as never,
+      { message: { role: "user" }, parts: [{ type: "text", text: "# Skill: connect-teams 문서 설명해줘" }] } as never,
+    )
+    expect(fetchCalls.some((c) => c.url.includes("graph.microsoft.com/v1.0/me/chats"))).toBe(false)
   })
 
   test("chat.message 로 chatId 를 직접 붙여넣으면 implicit connect 로 활성화된다", async () => {
