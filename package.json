@@ -1,6 +1,6 @@
 {
   "name": "opencode-ms-teams",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "OpenCode ↔ Microsoft Teams 양방향 플러그인. 세션 idle 시 응답을 Teams 채팅으로 전송하고 답신을 세션에 재주입.",
   "keywords": [
     "opencode",
